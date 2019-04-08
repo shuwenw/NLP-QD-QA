@@ -28,7 +28,6 @@ def bestPara(article, questions):
     for i in range(len(sim)):
         ind, v = max(enumerate(sim[i]), key = lambda x: x[1])
         bstParagraph[i] = ind
-    print (sim)
     return bstParagraph
 
 def bestSent(parag, ques):
@@ -81,7 +80,8 @@ def whatAnswer(st, qt):
     return "None Found"
 
 def whenAnswer(st, qt):
-
+    ans = ""
+    #print([w.dep_ for w in st])
     return "None Found"
 
 def whereAnswer(st, qt):
@@ -157,8 +157,6 @@ def main():
     bestMatchingS = [0] * len(qs)
     for i in range(len(qs)):
         bestMatchingS[i] = bestSent(text, qs[i])
-
-    print(bestMatchingS)
 
     ##################################################
     ### Finding Answer from Best Matching Sentence ###
