@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+import sys
+import spacy
+import string
+import numpy as np
+import warnings
+warnings.filterwarnings("ignore")
+
+# Set the article file path and the number of questions we need to generate
+pathArticle, nquestions = sys.argv[1:3]
+f = open(pathArticle)
+text = f.read()
+f.close()
+
+
+#define some parameters 
+noisy_pos_tags = ["PROP"]
+min_token_length = 2
+
+#Function to check if the token is a noise or not 
+def isNoise(token): 
+    is_noise = False
+    if token.pos_ in noisy_pos_tags:
+        is_noise = True 
+    elif token.is_stop == True:
+        is_noise = True
+    elif len(token.string) <= min_token_length:
+        is_noise = True
+    return is_noise 
+
+def isNoun(token):
+    return(token.pos_ == "NOUN" and len(token.string) > min_token_length)
+
+def cleanup(token, lower = True):
+    if lower:
+        token = token.lower()
+    return token.strip()
+
+from collections import Counter
+
+# Count the most frequent nouns in the corpus
+def keywords_selection(doc, n=10):
+    cleaned_list = [cleanup(word.string) for word in doc if not isNoise(word) and isNoun(word)]
+    top = Counter(cleaned_list).most_common(n)
+    return top
+
+def sentences_selection(doc, keywords):
+    sentences = doc.sents
+    S = []
+    for s in sentences:
+        st = s.text
+        if (st[-1] not in string.punctuation or '\n' in st):
+            continue
+        for w in keywords:
+            if w[0] in st:
+                S.append(s)
+                break
+    return S
+
+def why(sentence):
+    doc = nlp(sentence)
+    front = ""
+    aux = False
+    subj = doc[0]
+    for token in doc:
+        if token.dep_ == "ROOT":
+            # When the predicate is any form of "be"
+            if (token.text == "are" or token.text == "is" or token.text == "was" or token.text == "were"):
+                front = token.text
+                aux = True
+            # Find the auxiliary word
+            for child in token.children:
+                if(child.dep_ == "nsubj" or child.dep_ =="nsubjpass"):
+                    subj = child
+                if (child.dep_ == "aux" or child.dep_ == "auxpass"):
+                    front = child.text
+                    aux = True
+            # When there is no auxiliary word 
+            if (aux == False):
+                if (token.tag_ == "VBD"):
+                    front = "did"
+                elif (token.tag_ == "VBZ"):
+                    front = "does"
+                else:
+                    front = "do"
+
+    sentence = []
+    sentence.append("Why")
+    sentence.append(front)
+    if (doc[0].text == "Because" or doc[0].text == "Since"):
+        for token in doc[subj.i:]:
+            if (token.dep_ == "ROOT" and aux == False):
+                sentence.append(token.lemma_)
+            elif (token.text != front and token.text != "."):
+                sentence.append(token.text.lower())
+    else:
+        for token in doc:
+            if (token.text == "because" or token.text == "since"):
+                if (token.nbor(-1).is_punct):
+                    sentence.pop()
+                break
+            if (token.dep_ == "ROOT" and aux == False):
+                sentence.append(token.lemma_)
+            elif (token.text != front and token.text != "."):
+                sentence.append(token.text.lower())
+
+    
+    return (" ".join(sentence)+"?")
+
+
+def binary(sentence):
+    doc = nlp(sentence)
+    front = ""
+    aux = False
+    for token in doc:
+        if token.dep_ == "ROOT":
+            # When the predicate is any form of "be"
+            if (token.text == "are" or token.text == "is" or token.text == "was" or token.text == "were"):
+                front = token.text
+                aux = True
+                break
+            # Find the auxiliary word
+            for child in token.children:
+                if (child.dep_ == "aux" or child.dep_ == "auxpass"):
+                    front = child.text
+                    aux = True
+                    break
+            # When there is no auxiliary word 
+            if (aux == False):
+                if (token.tag_ == "VBD"):
+                    front = "did"
+                elif (token.tag_ == "VBZ"):
+                    front = "does"
+                else:
+                    front = "do"
+
+    sentence = []
+    sentence.append(front.capitalize())
+    for token in doc:
+        if (token.text == "."):
+            break
+        if (token.dep_ == "ROOT" and aux == False):
+            sentence.append(token.lemma_)
+        elif (token.text != front):
+            if (token == doc[0] and token.ent_type_ == ""):
+                sentence.append(token.text.lower())
+            else:
+                sentence.append(token.text)
+    return (" ".join(sentence)+"?")
+
+def what(sentence):
+    if(sentence[-1] == "."):
+        sentence = sentence[:-1]
+    doc = nlp(sentence)
+    word_bases = [token.lemma_ for token in doc]
+    ent_lbl = [ent.label_ for ent in doc.ents]
+    ent_txt = [ent.text for ent in doc.ents]
+    ent_dep = [ent.label_ for ent in doc.ents]
+    deps = [token.dep_ for token in doc]
+    #not_what = ['PERSON','LOC','GPE','DATE','TIME']
+    #if(any(i in not_what for i in ent_lbl)):
+    #    return("") #What is not the best question for this
+    #Get the root and children
+    if("ROOT" not in deps):
+        return
+    root = doc[deps.index("ROOT")]
+    ch = [child for child in root.children]
+    ch_clause = child_clause(ch, doc)
+    ch_idx = [child.i for child in root.children]
+    root_ch_idx = insert_root(ch_idx, ch, root)
+    if("be" in word_bases and root.lemma_ != "be"):
+        q = ["What", doc[word_bases.index("be")].text, root.text]
+    else:
+        q = ["What", root.text]
+    q.extend(ch_clause[root_ch_idx:])
+    return(" ".join(q) + "?")
+
+### Where
+def where(sentence):
+    if(sentence[-1] == "."):
+        sentence = sentence[:-1]    
+    doc = nlp(sentence)
+    ent_lbl = [ent.label_ for ent in doc.ents]
+    ent_dep = [ent.label_ for ent in doc.ents]
+    deps = [token.dep_ for token in doc]
+    #Get the place
+    if("GPE" in ent_lbl):
+        place = doc.ents[ent_lbl.index("GPE")]
+    elif("LOC" in ent_lbl):
+        place = doc.ents[ent_lbl.index("LOC")]
+    else:
+        return
+    #Get the root and its child clauses
+    if("ROOT" not in deps):
+        return
+    word_bases = [token.lemma_ for token in doc]
+    root = doc[deps.index("ROOT")]
+    ch = [child for child in root.children]
+    ch_idx = [child.i for child in root.children]
+    ch_clause = child_clause(ch, doc)
+    root_ch_idx = insert_root(ch_idx, ch, root) #To find the clause right after the root verb
+
+    ch_dep = [child.dep_ for child in ch]
+    ch_subj = ["subj" in dep for dep in ch_dep]
+    
+    #If "was" is the verb
+    to_be_s = False
+    if("be" in word_bases and True in ch_subj): #If sentence uses "is","was","are","were", etc
+        to_be_s = True
+        be = doc[word_bases.index("be")]
+        if(root.lemma_ == "be"):
+            q = ["Where", root.text, ch_clause[ch_subj.index(True)]]
+        else:
+            q = ["Where", be.text, ch_clause[ch_subj.index(True)], root.text]
+    #If "was" isn't the verb
+    elif(True in ch_subj):
+        q = ["Where did", ch_clause[ch_subj.index(True)], root.lemma_]
+    else:
+        return
+    #Deciding to add a context clause ("where was he?" vs "where was he when this happened?")
+    if(place.text not in ch_clause[root_ch_idx]):
+        q.append("when he")
+        if(to_be_s):
+            q.append(be.text)
+            if(root.lemma_ != "be"):
+                q.append(root.text)
+        else:
+            q.append(root.text)
+        q.append(ch_clause[root_ch_idx])
+    return(" ".join(q) + "?")
+
+### Who
+def who(sentence):
+    if(sentence[-1] == "."):
+        sentence = sentence[:-1]    
+    doc = nlp(sentence)
+    q = ""
+    ent_txt = [ent.text for ent in doc.ents]
+    ent_lbl = [ent.label_ for ent in doc.ents]
+    if("PERSON" in ent_lbl):
+        ent_ofInt = doc.ents[ent_lbl.index("PERSON")]
+        subj = doc[ent_ofInt.start:ent_ofInt.end] #The subject of the sentence
+        deps = [token.dep_ for token in doc] #Dependencies in the sentence. To find ROOT
+        if('ROOT' in deps):
+            root_idx = deps.index("ROOT") #Get the index
+        else:
+            return
+        root_ch = [child for child in doc[root_idx].children] #Get all of the children of the root
+        root_ch_idx = [c.i for c in root_ch] #And their indices
+        #Getting index of root word wrt the clauses
+        root_ch_idx.append(root_idx)
+        root_ch_idx.sort()
+        root_clause_idx = root_ch_idx.index(root_idx)
+        #Making questions
+        clauses = child_clause(root_ch,doc,ent_ofInt) #And the clauses based off of them
+        clauses.insert(root_clause_idx, doc[root_idx].text) #Insert the root word for later merging
+        ent_txt_list = ent_ofInt.text.split(" ")
+        in_clauses = [any(s in clauses[i] for s in ent_txt_list) for i in range(len(clauses))] #And if the entity is in it
+        #This goes through the clauses and sees if the named entity is inside any of the clauses
+        for i in range(len(in_clauses)):
+            if(in_clauses[i]): #If it is, then...
+                separated = clauses[i].split(" ") #Separate the clause into its respective words
+                for j in range(len(separated)): #And iterate through the words in this clause
+                    if(separated[j] in ent_ofInt.text): #When you find the word that is part of the entity
+                        separated[j] = "who" #There won't be a 'who who' situation because first depends on last, and child_clause removes the first name
+                clauses[i] = " ".join(separated)
+        q = " ".join(clauses)
+    if(q == ""):
+        return
+    return(q.capitalize()+"?")
+
+## Given a list of root.children tokens and the nlp doc, give clauses based on the children:
+def child_clause(children, doc, entity = None):
+    clauses = []
+    for ch in children:
+        h_ofInt = [ch]
+        idx_ofInt = [ch.i] #Change the -100 to the actual index of the ch in doc
+        heads = np.array([[doc[i],doc[i].head,i] for i in range(len(doc))])
+        while(any(i in heads[:,1] for i in h_ofInt)):
+            inds = [i for i in range(heads.shape[0]) if heads[i,1] in h_ofInt]
+            #Find the heads values that have a head that's already in h_ofInt
+            h_chosen = [heads[i,:] for i in range(heads.shape[0]) if heads[i,1] in h_ofInt]
+            if(entity != None):
+                for i in reversed(range(0,len(h_chosen))):
+                    if(h_chosen[i][1] in entity):
+                        #print(h_chosen[i])
+                        del h_chosen[i]
+            #Add what remains to the h_ofInt and idx_ofInt lists
+            h_ofInt.extend([h_chosen[i][0] for i in range(len(h_chosen))])
+            idx_ofInt.extend([h_chosen[i][2] for i in range(len(h_chosen))])
+            heads = np.delete(heads,inds,axis=0)
+        idx_ofInt.sort()
+        clause = [doc[i].text for i in idx_ofInt]
+        clause = " ".join(clause)
+        clauses.append(clause)
+    return(clauses)
+
+def insert_root(ch_idx, ch_word, root):
+    root_idx = root.i
+    ch_idx.append(root_idx)
+    ch_idx.sort()
+    ch_root_idx = ch_idx.index(root_idx)
+    return(ch_root_idx)
+
+nlp = spacy.load("en_core_web_sm")
+doc = nlp(text)
+keywords = keywords_selection(doc, n=6)
+keysents = sentences_selection(doc, keywords)
+
+Q = set()
+
+for sent in keysents:
+    labels = list(map(lambda x: x.label_, sent.ents))
+    if 'PERSON' in labels:
+        t = who(sent.text)
+        if t != None: 
+            Q.add((t, sent.text))
+    if 'LOC' in labels or 'GPE' in labels:
+        t = where(sent.text)
+        if t != None: 
+            Q.add((t, sent.text))
+    '''if 'DATE' in labels:
+        Q.add(when_question_generator(sent.text))'''
+    if 'because' in sent.text or 'Because' in sent.text:
+        Q.add((why(sent.text), sent.text))
+    Q.add((binary(sent.text), sent.text))
+    others = ['PERSON','LOC','GPE','DATE','TIME']
+    if(not any(i in labels for i in others)):
+        Q.add((what(sent.text), sent.text))
+Q = set(filter(None,Q))
+for i in range(int(nquestions)):
+    if Q: 
+        x = Q.pop()
+        print(x[0])
+        #print(x[1] + "\n")    #the original sentence for debug info
+    else: print("Try fewer questions?") 
+
+
+
+
+
