@@ -94,7 +94,7 @@ def whoAnswer(st, qt):
                     nlp = spacy.load("en_core_web_sm")
                     ind, v = max(enumerate([sub.similarity(qt) for sub in 
                         children]), key = lambda x: x[1])
-                    return children[ind]
+                    return children[ind].text
                     
     # Otherwise
     ans = ""
@@ -134,7 +134,7 @@ def whatAnswer(st, qt):
                     nlp = spacy.load("en_core_web_sm")
                     ind, v = max(enumerate([sub.similarity(qt) for sub in 
                         children]), key = lambda x: x[1])
-                    return children[ind]
+                    return children[ind].text
 
     # Otherwise
     ans = ""
@@ -171,7 +171,7 @@ def whyAnswer(st, qt):
                 if (child.dep_ == "nsubj" or child.dep_ == "nsubjpass"):
                     subj = child.i
                     break
-    for token in qt:
+    for token in st:
         if token.text.lower() == "because": because = token.i
 
     if (because == -1): return st.text
@@ -182,7 +182,7 @@ def whyAnswer(st, qt):
         return sentence
     else:
         #first_nounphrase = list(qt.noun_chunks)[0]
-        sentence = st[because:].text
+        sentence = "Because " + st[because+1:].text
         return sentence
 
 def howAnswer(st, qt):
@@ -320,7 +320,7 @@ def main():
     # find the answer
     ans = []
     for i in range(len(bestMatchingS)):
-        ans.append(generateAns(bestMatchingS[i].text, qs[i]))
+        ans.append(generateAns(bestMatchingS[i].text, qs[i]).rstrip("\n"))
 
     for a in ans:
         print(a)
